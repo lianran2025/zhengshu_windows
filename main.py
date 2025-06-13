@@ -93,7 +93,7 @@ def convert_to_pdf(task_id):
         if total == 0:
             return jsonify({'error': '没有找到可转换的docx文件'}), 400
         
-        # 初始化进度
+        # 初始化进度，新增 logs 字段
         task_status[task_id] = {
             'total': total,
             'current': 0,
@@ -102,10 +102,13 @@ def convert_to_pdf(task_id):
             'done': False,
             'convert_done': False,
             'merge_done': False,
-            'package_done': False
+            'package_done': False,
+            'logs': []  # 新增
         }
         
-        print(f"开始批量转换PDF，任务ID: {task_id}，文件数量: {total}")
+        log = f"开始批量转换PDF，任务ID: {task_id}，文件数量: {total}"
+        print(log)
+        task_status[task_id]['logs'].append(log)
         
         # 调用批量转换函数
         results = batch_convert_docx_to_pdf(task_folder, pdf_task_folder, task_id)
@@ -113,7 +116,9 @@ def convert_to_pdf(task_id):
         # 标记转换完成
         task_status[task_id]['convert_done'] = True
         task_status[task_id]['done'] = False  # 整体还未完成
-        print(f"PDF批量转换完成，任务ID: {task_id}")
+        log = f"PDF批量转换完成，任务ID: {task_id}"
+        print(log)
+        task_status[task_id]['logs'].append(log)
         
         return jsonify({
             'msg': '转换完成', 
@@ -123,10 +128,11 @@ def convert_to_pdf(task_id):
         })
     except Exception as e:
         print(f"转换PDF失败: {str(e)}")
+        if task_id in task_status:
+            task_status[task_id]['logs'].append(f"转换PDF失败: {str(e)}")
         return jsonify({'error': f'转换失败: {str(e)}'}), 500
 
 # 新增：批量转换函数，复用 Word 进程
-
 def batch_convert_docx_to_pdf(docx_folder, pdf_folder, task_id=None):
     results = []
     word = None
@@ -144,16 +150,20 @@ def batch_convert_docx_to_pdf(docx_folder, pdf_folder, task_id=None):
                 doc.SaveAs(dst, FileFormat=17)
                 doc.Close()
                 result = {'file': filename, 'status': 'success'}
-                print(f"转换成功: {filename}")
+                log = f"转换成功: {filename}"
+                print(log)
             except Exception as e:
                 result = {'file': filename, 'status': 'fail', 'reason': str(e)}
-                print(f"转换失败: {filename} - {str(e)}")
+                log = f"转换失败: {filename} - {str(e)}"
+                print(log)
             results.append(result)
-            # 实时更新进度
+            # 实时更新进度和日志
             if task_id and task_id in task_status:
                 task_status[task_id]['current'] = idx + 1
                 task_status[task_id]['current_file'] = filename
                 task_status[task_id]['results'] = results.copy()
+                if 'logs' in task_status[task_id]:
+                    task_status[task_id]['logs'].append(log)
         return results
     finally:
         if word:
@@ -170,6 +180,9 @@ def get_progress(task_id):
     all_done = status.get('convert_done', False) and status.get('merge_done', False) and status.get('package_done', False)
     status['done'] = all_done
     
+    # 确保返回 logs 字段
+    if 'logs' not in status:
+        status['logs'] = []
     return jsonify(status)
 
 @app.route('/merge/<task_id>', methods=['POST'])
@@ -183,24 +196,39 @@ def merge_pdfs(task_id):
         merger = PdfMerger()
         pdfs = [f for f in sorted(os.listdir(pdf_task_folder)) if f.endswith('.pdf')]
         
-        print(f"合并PDF，任务ID: {task_id}，PDF数量: {len(pdfs)}")
+        log = f"合并PDF，任务ID: {task_id}，PDF数量: {len(pdfs)}"
+        print(log)
+        if task_id in task_status and 'logs' in task_status[task_id]:
+            task_status[task_id]['logs'].append(log)
         
         if not pdfs:
-            print("没有可合并的 PDF 文件")
-            return jsonify({'msg': '没有可合并的 PDF 文件', 'merged_file': None}), 400
+            log = "没有可合并的 PDF 文件"
+            print(log)
+            if task_id in task_status and 'logs' in task_status[task_id]:
+                task_status[task_id]['logs'].append(log)
+            return jsonify({'msg': log, 'merged_file': None}), 400
         
         for filename in pdfs:
             pdf_path = os.path.join(pdf_task_folder, filename)
-            print(f"合并文件: {filename}")
+            log = f"合并文件: {filename}"
+            print(log)
+            if task_id in task_status and 'logs' in task_status[task_id]:
+                task_status[task_id]['logs'].append(log)
             try:
                 merger.append(pdf_path)
             except Exception as e:
-                print(f"合并文件失败 {filename}: {str(e)}")
+                log = f"合并文件失败 {filename}: {str(e)}"
+                print(log)
+                if task_id in task_status and 'logs' in task_status[task_id]:
+                    task_status[task_id]['logs'].append(log)
                 continue
         
         merger.write(merged_file)
         merger.close()
-        print(f"合并完成，输出文件: {merged_file}")
+        log = f"合并完成，输出文件: {merged_file}"
+        print(log)
+        if task_id in task_status and 'logs' in task_status[task_id]:
+            task_status[task_id]['logs'].append(log)
         
         # 更新任务状态
         if task_id in task_status:
@@ -212,7 +240,10 @@ def merge_pdfs(task_id):
             'pdf_count': len(pdfs)
         })
     except Exception as e:
-        print(f"合并PDF失败: {str(e)}")
+        log = f"合并PDF失败: {str(e)}"
+        print(log)
+        if task_id in task_status and 'logs' in task_status[task_id]:
+            task_status[task_id]['logs'].append(log)
         return jsonify({'error': f'合并失败: {str(e)}'}), 500
 
 # 新增：生成完整压缩包接口
@@ -230,11 +261,26 @@ def package_complete_files(task_id):
         merged_pdf = os.path.join(MERGED_FOLDER, f'{task_id}_merged.pdf')
         complete_zip_path = os.path.join(COMPLETE_FOLDER, f'{task_id}_{filename}')
         
-        print(f"开始生成完整压缩包，任务ID: {task_id}")
-        print(f"文件夹名称: {folder_name}")
-        print(f"docx文件夹: {docx_folder}")
-        print(f"合并PDF: {merged_pdf}")
-        print(f"输出路径: {complete_zip_path}")
+        log = f"开始生成完整压缩包，任务ID: {task_id}"
+        print(log)
+        if task_id in task_status and 'logs' in task_status[task_id]:
+            task_status[task_id]['logs'].append(log)
+        log = f"文件夹名称: {folder_name}"
+        print(log)
+        if task_id in task_status and 'logs' in task_status[task_id]:
+            task_status[task_id]['logs'].append(log)
+        log = f"docx文件夹: {docx_folder}"
+        print(log)
+        if task_id in task_status and 'logs' in task_status[task_id]:
+            task_status[task_id]['logs'].append(log)
+        log = f"合并PDF: {merged_pdf}"
+        print(log)
+        if task_id in task_status and 'logs' in task_status[task_id]:
+            task_status[task_id]['logs'].append(log)
+        log = f"输出路径: {complete_zip_path}"
+        print(log)
+        if task_id in task_status and 'logs' in task_status[task_id]:
+            task_status[task_id]['logs'].append(log)
         
         # 检查必要文件是否存在
         if not os.path.exists(docx_folder):
@@ -253,7 +299,10 @@ def package_complete_files(task_id):
                         # 将文件放在文件夹内：文件夹名/文件名
                         archive_path = f"{folder_name}/{file}"
                         zipf.write(file_path, archive_path)
-                        print(f"添加docx文件到文件夹: {archive_path}")
+                        log = f"添加docx文件到文件夹: {archive_path}"
+                        print(log)
+                        if task_id in task_status and 'logs' in task_status[task_id]:
+                            task_status[task_id]['logs'].append(log)
                         file_count += 1
             
             # 添加合并后的PDF文件到文件夹内
@@ -261,7 +310,10 @@ def package_complete_files(task_id):
                 # 将PDF文件放在文件夹内：文件夹名/合并证书.pdf
                 archive_path = f"{folder_name}/合并证书.pdf"
                 zipf.write(merged_pdf, archive_path)
-                print(f"添加合并PDF文件到文件夹: {archive_path}")
+                log = f"添加合并PDF文件到文件夹: {archive_path}"
+                print(log)
+                if task_id in task_status and 'logs' in task_status[task_id]:
+                    task_status[task_id]['logs'].append(log)
                 file_count += 1
         
         # 更新任务状态
@@ -270,9 +322,18 @@ def package_complete_files(task_id):
             task_status[task_id]['complete_zip_path'] = complete_zip_path
             task_status[task_id]['folder_name'] = folder_name
         
-        print(f"完整压缩包生成成功: {complete_zip_path}")
-        print(f"解压后将创建文件夹: {folder_name}")
-        print(f"包含文件数量: {file_count}")
+        log = f"完整压缩包生成成功: {complete_zip_path}"
+        print(log)
+        if task_id in task_status and 'logs' in task_status[task_id]:
+            task_status[task_id]['logs'].append(log)
+        log = f"解压后将创建文件夹: {folder_name}"
+        print(log)
+        if task_id in task_status and 'logs' in task_status[task_id]:
+            task_status[task_id]['logs'].append(log)
+        log = f"包含文件数量: {file_count}"
+        print(log)
+        if task_id in task_status and 'logs' in task_status[task_id]:
+            task_status[task_id]['logs'].append(log)
         
         return jsonify({
             'status': 'success',
@@ -283,7 +344,10 @@ def package_complete_files(task_id):
         })
         
     except Exception as e:
-        print(f"生成完整压缩包失败: {str(e)}")
+        log = f"生成完整压缩包失败: {str(e)}"
+        print(log)
+        if task_id in task_status and 'logs' in task_status[task_id]:
+            task_status[task_id]['logs'].append(log)
         return jsonify({
             'status': 'error',
             'message': f'生成完整压缩包失败: {str(e)}'
@@ -328,7 +392,10 @@ def download_file(task_id, filetype):
             
         return send_file(file_path, as_attachment=True)
     except Exception as e:
-        print(f"下载文件失败: {str(e)}")
+        log = f"下载文件失败: {str(e)}"
+        print(log)
+        if task_id in task_status and 'logs' in task_status[task_id]:
+            task_status[task_id]['logs'].append(log)
         return jsonify({'error': f'下载失败: {str(e)}'}), 500
 
 if __name__ == '__main__':
