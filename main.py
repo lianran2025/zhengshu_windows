@@ -6,7 +6,7 @@ from PyPDF2 import PdfMerger
 import uuid
 import shutil
 import logging
-import pythoncom
+import win32com.client
 import zipfile
 
 app = Flask(__name__)
@@ -104,39 +104,15 @@ def convert_to_pdf(task_id):
             'package_done': False
         }
         
-        results = []
-        print(f"开始转换PDF，任务ID: {task_id}，文件数量: {total}")
+        print(f"开始批量转换PDF，任务ID: {task_id}，文件数量: {total}")
         
-        for idx, filename in enumerate(files):
-            src = os.path.abspath(os.path.join(task_folder, filename))
-            dst = os.path.abspath(os.path.join(pdf_task_folder, filename.replace('.docx', '.pdf')))
-            # 实时更新进度
-            task_status[task_id]['current'] = idx + 1
-            task_status[task_id]['current_file'] = filename
-            
-            print(f"转换文件 {idx+1}/{total}: {filename}")
-            
-            try:
-                pythoncom.CoInitialize()
-                convert(src, dst)
-                pythoncom.CoUninitialize()
-                if os.path.exists(dst):
-                    result = {'file': filename, 'status': 'success'}
-                    print(f"转换成功: {filename}")
-                else:
-                    result = {'file': filename, 'status': 'fail', 'reason': 'No PDF generated'}
-                    print(f"转换失败: {filename} - 未生成PDF文件")
-            except Exception as e:
-                result = {'file': filename, 'status': 'fail', 'reason': str(e)}
-                print(f"转换失败: {filename} - {str(e)}")
-            
-            results.append(result)
-            task_status[task_id]['results'] = results.copy()
+        # 调用批量转换函数
+        results = batch_convert_docx_to_pdf(task_folder, pdf_task_folder, task_id)
         
         # 标记转换完成
         task_status[task_id]['convert_done'] = True
         task_status[task_id]['done'] = False  # 整体还未完成
-        print(f"PDF转换完成，任务ID: {task_id}")
+        print(f"PDF批量转换完成，任务ID: {task_id}")
         
         return jsonify({
             'msg': '转换完成', 
@@ -147,6 +123,39 @@ def convert_to_pdf(task_id):
     except Exception as e:
         print(f"转换PDF失败: {str(e)}")
         return jsonify({'error': f'转换失败: {str(e)}'}), 500
+
+# 新增：批量转换函数，复用 Word 进程
+
+def batch_convert_docx_to_pdf(docx_folder, pdf_folder, task_id=None):
+    results = []
+    word = None
+    try:
+        word = win32com.client.Dispatch('Word.Application')
+        word.Visible = False
+        files = [f for f in os.listdir(docx_folder) if f.endswith('.docx') and not f.startswith('~$')]
+        total = len(files)
+        for idx, filename in enumerate(files):
+            src = os.path.abspath(os.path.join(docx_folder, filename))
+            dst = os.path.abspath(os.path.join(pdf_folder, filename.replace('.docx', '.pdf')))
+            try:
+                doc = word.Documents.Open(src)
+                doc.SaveAs(dst, FileFormat=17)
+                doc.Close()
+                result = {'file': filename, 'status': 'success'}
+                print(f"转换成功: {filename}")
+            except Exception as e:
+                result = {'file': filename, 'status': 'fail', 'reason': str(e)}
+                print(f"转换失败: {filename} - {str(e)}")
+            results.append(result)
+            # 实时更新进度
+            if task_id and task_id in task_status:
+                task_status[task_id]['current'] = idx + 1
+                task_status[task_id]['current_file'] = filename
+                task_status[task_id]['results'] = results.copy()
+        return results
+    finally:
+        if word:
+            word.Quit()
 
 @app.route('/progress/<task_id>', methods=['GET'])
 def get_progress(task_id):
