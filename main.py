@@ -7,6 +7,7 @@ import uuid
 import shutil
 import logging
 import win32com.client
+import pythoncom
 import zipfile
 
 app = Flask(__name__)
@@ -129,6 +130,7 @@ def convert_to_pdf(task_id):
 def batch_convert_docx_to_pdf(docx_folder, pdf_folder, task_id=None):
     results = []
     word = None
+    pythoncom.CoInitialize()  # 新增：初始化 COM
     try:
         word = win32com.client.Dispatch('Word.Application')
         word.Visible = False
@@ -156,6 +158,7 @@ def batch_convert_docx_to_pdf(docx_folder, pdf_folder, task_id=None):
     finally:
         if word:
             word.Quit()
+        pythoncom.CoUninitialize()  # 新增：释放 COM
 
 @app.route('/progress/<task_id>', methods=['GET'])
 def get_progress(task_id):
